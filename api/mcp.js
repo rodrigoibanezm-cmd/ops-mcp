@@ -9,6 +9,15 @@ const tools = [
     }
   },
   {
+    name: 'vercel.projects.list',
+    description: 'Lista proyectos accesibles en Vercel para armar OPS_PROJECTS_JSON sin adivinar IDs.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false
+    }
+  },
+  {
     name: 'vercel.deploy.latest',
     description: 'Devuelve el último deploy de Vercel para un project_key.',
     inputSchema: {
@@ -16,7 +25,7 @@ const tools = [
       properties: {
         project_key: {
           type: 'string',
-          description: 'Clave lógica del proyecto, por ejemplo: ops'
+          description: 'Clave lógica del proyecto, por ejemplo: helice'
         }
       },
       required: ['project_key'],
@@ -68,7 +77,13 @@ function getProject(projectKey) {
   return project;
 }
 
-async function vercelFetch(path, project) {
+function getDefaultTeamProject() {
+  const projects = getProjectsConfig();
+  const firstProject = Object.values(projects)[0];
+  return firstProject ?? {};
+}
+
+async function vercelFetch(path, project = {}) {
   if (!process.env.VERCEL_TOKEN) {
     throw new Error('missing_VERCEL_TOKEN');
   }
@@ -93,6 +108,29 @@ async function vercelFetch(path, project) {
   }
 
   return data;
+}
+
+async function listProjects() {
+  const data = await vercelFetch('/v9/projects?limit=100', getDefaultTeamProject());
+  const projects = data?.projects ?? [];
+
+  return {
+    ok: true,
+    count: projects.length,
+    projects: projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      framework: project.framework ?? null,
+      latest_deployments: (project.latestDeployments ?? []).slice(0, 3).map((deployment) => ({
+        uid: deployment.uid,
+        name: deployment.name,
+        url: deployment.url ? `https://${deployment.url}` : null,
+        state: deployment.state,
+        target: deployment.target ?? null,
+        created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
+      }))
+    }))
+  };
 }
 
 async function getLatestDeployment(projectKey) {
@@ -142,6 +180,19 @@ async function callTool(name, args = {}) {
             null,
             2
           )
+        }
+      ]
+    };
+  }
+
+  if (name === 'vercel.projects.list') {
+    const result = await listProjects();
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
         }
       ]
     };
