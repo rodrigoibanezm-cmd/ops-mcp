@@ -1,0 +1,15 @@
+{
+  "name": "vercel-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Operational MCP for Vercel",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "dotenv": "^16.5.0"
+  }
+}
