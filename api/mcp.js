@@ -23,10 +23,7 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        project_key: {
-          type: 'string',
-          description: 'Clave lógica del proyecto, por ejemplo: helice'
-        }
+        project_key: { type: 'string', description: 'Clave lógica del proyecto, por ejemplo: helice' }
       },
       required: ['project_key'],
       additionalProperties: false
@@ -38,10 +35,20 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        project_key: {
-          type: 'string',
-          description: 'Clave lógica del proyecto, por ejemplo: helice'
-        }
+        project_key: { type: 'string', description: 'Clave lógica del proyecto, por ejemplo: helice' }
+      },
+      required: ['project_key'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'vercel.logs.errors',
+    description: 'Devuelve eventos recientes de deploys con estado ERROR o CANCELED para un proyecto.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_key: { type: 'string', description: 'Clave lógica del proyecto, por ejemplo: helice' },
+        limit: { type: 'number', description: 'Cantidad máxima de deploys a revisar. Default: 10' }
       },
       required: ['project_key'],
       additionalProperties: false
@@ -50,85 +57,48 @@ const tools = [
 ];
 
 function jsonRpc(id, result) {
-  return {
-    jsonrpc: '2.0',
-    id: id ?? null,
-    result
-  };
+  return { jsonrpc: '2.0', id: id ?? null, result };
 }
 
 function jsonRpcError(id, code, message) {
-  return {
-    jsonrpc: '2.0',
-    id: id ?? null,
-    error: { code, message }
-  };
+  return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
 }
 
 function getProjectsConfig() {
-  if (!process.env.OPS_PROJECTS_JSON) {
-    throw new Error('missing_OPS_PROJECTS_JSON');
-  }
-
-  try {
-    return JSON.parse(process.env.OPS_PROJECTS_JSON);
-  } catch {
-    throw new Error('invalid_OPS_PROJECTS_JSON');
-  }
+  if (!process.env.OPS_PROJECTS_JSON) throw new Error('missing_OPS_PROJECTS_JSON');
+  try { return JSON.parse(process.env.OPS_PROJECTS_JSON); } catch { throw new Error('invalid_OPS_PROJECTS_JSON'); }
 }
 
 function getProject(projectKey) {
   const projects = getProjectsConfig();
   const project = projects[projectKey];
-
-  if (!project) {
-    throw new Error(`unknown_project_key:${projectKey}`);
-  }
-
-  if (!project.vercel_project_id) {
-    throw new Error(`missing_vercel_project_id:${projectKey}`);
-  }
-
+  if (!project) throw new Error(`unknown_project_key:${projectKey}`);
+  if (!project.vercel_project_id) throw new Error(`missing_vercel_project_id:${projectKey}`);
   return project;
 }
 
 function getDefaultTeamProject() {
   const projects = getProjectsConfig();
-  const firstProject = Object.values(projects)[0];
-  return firstProject ?? {};
+  return Object.values(projects)[0] ?? {};
 }
 
 async function vercelFetch(path, project = {}) {
-  if (!process.env.VERCEL_TOKEN) {
-    throw new Error('missing_VERCEL_TOKEN');
-  }
-
+  if (!process.env.VERCEL_TOKEN) throw new Error('missing_VERCEL_TOKEN');
   const url = new URL(`https://api.vercel.com${path}`);
-
-  if (project.vercel_team_id) {
-    url.searchParams.set('teamId', project.vercel_team_id);
-  }
+  if (project.vercel_team_id) url.searchParams.set('teamId', project.vercel_team_id);
 
   const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${process.env.VERCEL_TOKEN}`,
-      'Content-Type': 'application/json'
-    }
+    headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}`, 'Content-Type': 'application/json' }
   });
 
   const data = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new Error(`vercel_api_error:${response.status}:${data?.error?.message ?? 'unknown'}`);
-  }
-
+  if (!response.ok) throw new Error(`vercel_api_error:${response.status}:${data?.error?.message ?? 'unknown'}`);
   return data;
 }
 
 async function listProjects() {
   const data = await vercelFetch('/v9/projects?limit=100', getDefaultTeamProject());
   const projects = data?.projects ?? [];
-
   return {
     ok: true,
     count: projects.length,
@@ -150,21 +120,9 @@ async function listProjects() {
 
 async function getLatestDeployment(projectKey) {
   const project = getProject(projectKey);
-  const data = await vercelFetch(
-    `/v6/deployments?projectId=${encodeURIComponent(project.vercel_project_id)}&limit=1`,
-    project
-  );
-
+  const data = await vercelFetch(`/v6/deployments?projectId=${encodeURIComponent(project.vercel_project_id)}&limit=1`, project);
   const deployment = data?.deployments?.[0];
-
-  if (!deployment) {
-    return {
-      ok: false,
-      project_key: projectKey,
-      reason: 'no_deployments_found'
-    };
-  }
-
+  if (!deployment) return { ok: false, project_key: projectKey, reason: 'no_deployments_found' };
   return {
     ok: true,
     project_key: projectKey,
@@ -181,13 +139,8 @@ async function getLatestDeployment(projectKey) {
 
 async function listEnvVars(projectKey) {
   const project = getProject(projectKey);
-  const data = await vercelFetch(
-    `/v9/projects/${encodeURIComponent(project.vercel_project_id)}/env`,
-    project
-  );
-
+  const data = await vercelFetch(`/v9/projects/${encodeURIComponent(project.vercel_project_id)}/env`, project);
   const envs = data?.envs ?? [];
-
   return {
     ok: true,
     project_key: projectKey,
@@ -204,121 +157,63 @@ async function listEnvVars(projectKey) {
   };
 }
 
+async function getErrorDeployments(projectKey, limit = 10) {
+  const project = getProject(projectKey);
+  const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+  const data = await vercelFetch(`/v6/deployments?projectId=${encodeURIComponent(project.vercel_project_id)}&limit=${safeLimit}`, project);
+  const deployments = data?.deployments ?? [];
+  const errors = deployments.filter((deployment) => ['ERROR', 'CANCELED'].includes(deployment.state));
+  return {
+    ok: true,
+    project_key: projectKey,
+    checked: deployments.length,
+    count: errors.length,
+    errors: errors.map((deployment) => ({
+      uid: deployment.uid,
+      name: deployment.name,
+      url: deployment.url ? `https://${deployment.url}` : null,
+      state: deployment.state,
+      target: deployment.target ?? null,
+      created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
+    }))
+  };
+}
+
 async function callTool(name, args = {}) {
   if (name === 'health.check') {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              ok: true,
-              service: 'ops-mcp',
-              transport: 'http',
-              status: 'alive'
-            },
-            null,
-            2
-          )
-        }
-      ]
-    };
+    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, service: 'ops-mcp', transport: 'http', status: 'alive' }, null, 2) }] };
   }
-
-  if (name === 'vercel.projects.list') {
-    const result = await listProjects();
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2)
-        }
-      ]
-    };
-  }
-
+  if (name === 'vercel.projects.list') return { content: [{ type: 'text', text: JSON.stringify(await listProjects(), null, 2) }] };
   if (name === 'vercel.deploy.latest') {
-    if (!args.project_key) {
-      throw new Error('missing_project_key');
-    }
-
-    const result = await getLatestDeployment(args.project_key);
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2)
-        }
-      ]
-    };
+    if (!args.project_key) throw new Error('missing_project_key');
+    return { content: [{ type: 'text', text: JSON.stringify(await getLatestDeployment(args.project_key), null, 2) }] };
   }
-
   if (name === 'vercel.env.list') {
-    if (!args.project_key) {
-      throw new Error('missing_project_key');
-    }
-
-    const result = await listEnvVars(args.project_key);
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2)
-        }
-      ]
-    };
+    if (!args.project_key) throw new Error('missing_project_key');
+    return { content: [{ type: 'text', text: JSON.stringify(await listEnvVars(args.project_key), null, 2) }] };
   }
-
+  if (name === 'vercel.logs.errors') {
+    if (!args.project_key) throw new Error('missing_project_key');
+    return { content: [{ type: 'text', text: JSON.stringify(await getErrorDeployments(args.project_key, args.limit), null, 2) }] };
+  }
   throw new Error(`unknown_tool:${name}`);
 }
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    return res.status(200).json({
-      ok: true,
-      service: 'ops-mcp',
-      transport: 'http',
-      status: 'alive',
-      endpoint: '/api/mcp',
-      tools: tools.map((tool) => tool.name)
-    });
+    return res.status(200).json({ ok: true, service: 'ops-mcp', transport: 'http', status: 'alive', endpoint: '/api/mcp', tools: tools.map((tool) => tool.name) });
   }
-
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ ok: false, error: 'method_not_allowed' });
   }
-
   const { id, method, params } = req.body ?? {};
-
   try {
     if (method === 'initialize') {
-      return res.status(200).json(
-        jsonRpc(id, {
-          protocolVersion: '2024-11-05',
-          capabilities: {
-            tools: {}
-          },
-          serverInfo: {
-            name: 'ops-mcp',
-            version: '1.0.0'
-          }
-        })
-      );
+      return res.status(200).json(jsonRpc(id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'ops-mcp', version: '1.0.0' } }));
     }
-
-    if (method === 'tools/list') {
-      return res.status(200).json(jsonRpc(id, { tools }));
-    }
-
-    if (method === 'tools/call') {
-      const result = await callTool(params?.name, params?.arguments ?? {});
-      return res.status(200).json(jsonRpc(id, result));
-    }
-
+    if (method === 'tools/list') return res.status(200).json(jsonRpc(id, { tools }));
+    if (method === 'tools/call') return res.status(200).json(jsonRpc(id, await callTool(params?.name, params?.arguments ?? {})));
     return res.status(200).json(jsonRpcError(id, -32601, `method_not_found:${method}`));
   } catch (error) {
     return res.status(200).json(jsonRpcError(id, -32000, error.message));
