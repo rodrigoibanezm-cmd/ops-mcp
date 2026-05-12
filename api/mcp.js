@@ -31,6 +31,21 @@ const tools = [
       required: ['project_key'],
       additionalProperties: false
     }
+  },
+  {
+    name: 'vercel.env.list',
+    description: 'Lista variables de entorno de un proyecto Vercel sin revelar valores secretos.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_key: {
+          type: 'string',
+          description: 'Clave lógica del proyecto, por ejemplo: helice'
+        }
+      },
+      required: ['project_key'],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -164,6 +179,31 @@ async function getLatestDeployment(projectKey) {
   };
 }
 
+async function listEnvVars(projectKey) {
+  const project = getProject(projectKey);
+  const data = await vercelFetch(
+    `/v9/projects/${encodeURIComponent(project.vercel_project_id)}/env`,
+    project
+  );
+
+  const envs = data?.envs ?? [];
+
+  return {
+    ok: true,
+    project_key: projectKey,
+    count: envs.length,
+    envs: envs.map((env) => ({
+      id: env.id,
+      key: env.key,
+      target: env.target,
+      type: env.type,
+      configuration_id: env.configurationId ?? null,
+      created_at: env.createdAt ? new Date(env.createdAt).toISOString() : null,
+      updated_at: env.updatedAt ? new Date(env.updatedAt).toISOString() : null
+    }))
+  };
+}
+
 async function callTool(name, args = {}) {
   if (name === 'health.check') {
     return {
@@ -204,6 +244,23 @@ async function callTool(name, args = {}) {
     }
 
     const result = await getLatestDeployment(args.project_key);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  }
+
+  if (name === 'vercel.env.list') {
+    if (!args.project_key) {
+      throw new Error('missing_project_key');
+    }
+
+    const result = await listEnvVars(args.project_key);
 
     return {
       content: [
