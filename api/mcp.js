@@ -10,13 +10,13 @@ const tools = [
   },
   {
     name: 'vercel.deploy.latest',
-    description: 'Devuelve placeholder del último deploy de Vercel para un project_key.',
+    description: 'Devuelve el último deploy de Vercel para un project_key.',
     inputSchema: {
       type: 'object',
       properties: {
         project_key: {
           type: 'string',
-          description: 'Clave lógica del proyecto, por ejemplo: helice'
+          description: 'Clave lógica del proyecto, por ejemplo: ops'
         }
       },
       required: ['project_key'],
@@ -38,6 +38,91 @@ function jsonRpcError(id, code, message) {
     jsonrpc: '2.0',
     id: id ?? null,
     error: { code, message }
+  };
+}
+
+function getProjectsConfig() {
+  if (!process.env.OPS_PROJECTS_JSON) {
+    throw new Error('missing_OPS_PROJECTS_JSON');
+  }
+
+  try {
+    return JSON.parse(process.env.OPS_PROJECTS_JSON);
+  } catch {
+    throw new Error('invalid_OPS_PROJECTS_JSON');
+  }
+}
+
+function getProject(projectKey) {
+  const projects = getProjectsConfig();
+  const project = projects[projectKey];
+
+  if (!project) {
+    throw new Error(`unknown_project_key:${projectKey}`);
+  }
+
+  if (!project.vercel_project_id) {
+    throw new Error(`missing_vercel_project_id:${projectKey}`);
+  }
+
+  return project;
+}
+
+async function vercelFetch(path, project) {
+  if (!process.env.VERCEL_TOKEN) {
+    throw new Error('missing_VERCEL_TOKEN');
+  }
+
+  const url = new URL(`https://api.vercel.com${path}`);
+
+  if (project.vercel_team_id) {
+    url.searchParams.set('teamId', project.vercel_team_id);
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${process.env.VERCEL_TOKEN}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`vercel_api_error:${response.status}:${data?.error?.message ?? 'unknown'}`);
+  }
+
+  return data;
+}
+
+async function getLatestDeployment(projectKey) {
+  const project = getProject(projectKey);
+  const data = await vercelFetch(
+    `/v6/deployments?projectId=${encodeURIComponent(project.vercel_project_id)}&limit=1`,
+    project
+  );
+
+  const deployment = data?.deployments?.[0];
+
+  if (!deployment) {
+    return {
+      ok: false,
+      project_key: projectKey,
+      reason: 'no_deployments_found'
+    };
+  }
+
+  return {
+    ok: true,
+    project_key: projectKey,
+    deployment: {
+      uid: deployment.uid,
+      name: deployment.name,
+      url: deployment.url ? `https://${deployment.url}` : null,
+      state: deployment.state,
+      target: deployment.target ?? null,
+      created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
+    }
   };
 }
 
@@ -67,20 +152,13 @@ async function callTool(name, args = {}) {
       throw new Error('missing_project_key');
     }
 
+    const result = await getLatestDeployment(args.project_key);
+
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(
-            {
-              ok: true,
-              project_key: args.project_key,
-              status: 'placeholder',
-              next: 'connect_vercel_api'
-            },
-            null,
-            2
-          )
+          text: JSON.stringify(result, null, 2)
         }
       ]
     };
