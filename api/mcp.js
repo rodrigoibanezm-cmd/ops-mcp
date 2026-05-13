@@ -8,8 +8,7 @@ export default async function handler(req, res) {
       service: 'ops-mcp',
       transport: 'http',
       status: 'alive',
-      endpoint: '/api/mcp',
-      tools: tools.map((tool) => tool.name)
+      endpoint: '/api/mcp'
     });
   }
 
