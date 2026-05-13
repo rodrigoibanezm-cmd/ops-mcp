@@ -64,6 +64,66 @@ Y resuelve IDs desde configuración.
 
 Nunca hardcodear proyectos dentro de las tools.
 
+## Arquitectura modular
+
+`api/mcp.js` debe mantenerse como router thin.
+
+Responsabilidad:
+
+```txt
+- recibir HTTP
+- responder GET health
+- manejar initialize
+- manejar tools/list
+- manejar tools/call
+- devolver JSON-RPC
+```
+
+No debe contener lógica operacional de Vercel, Upstash ni Google.
+
+Estructura actual:
+
+```txt
+api/mcp.js
+  Router HTTP + JSON-RPC
+
+lib/mcp/jsonRpc.js
+  Helpers JSON-RPC
+
+lib/mcp/tools.js
+  Registry + dispatch de tools
+
+lib/config/projects.js
+  Resolución de project_key desde OPS_PROJECTS_JSON
+
+lib/vercel/client.js
+  Cliente Vercel API
+
+lib/tools/vercel.js
+  Lógica operacional Vercel SAFE
+```
+
+Regla:
+
+```txt
+Si una tool nueva hace crecer api/mcp.js, está mal ubicada.
+```
+
+Riesgo futuro:
+
+```txt
+lib/mcp/tools.js puede crecer demasiado cuando entren Upstash/Google.
+```
+
+Cuando eso pase, separar por dominio:
+
+```txt
+lib/tools/vercel.registry.js
+lib/tools/vercel.handlers.js
+lib/tools/upstash.registry.js
+lib/tools/upstash.handlers.js
+```
+
 ## Configuración runtime
 
 El proyecto usa variables de entorno en Vercel:
@@ -289,3 +349,11 @@ Repo cloud-first.
 Los archivos se editan desde ChatGPT usando el conector oficial de GitHub.
 
 El MCP está hosteado en Vercel y expone endpoint HTTP.
+
+`GET /api/mcp` expone solo health básico.
+
+La lista de tools solo se obtiene por JSON-RPC usando:
+
+```txt
+tools/list
+```
