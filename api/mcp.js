@@ -42,8 +42,8 @@ const tools = [
     }
   },
   {
-    name: 'vercel.logs.errors',
-    description: 'Devuelve eventos recientes de deploys con estado ERROR o CANCELED para un proyecto.',
+    name: 'vercel.deploy.errors',
+    description: 'Devuelve deploys recientes con estado ERROR o CANCELED para un proyecto.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -51,6 +51,19 @@ const tools = [
         limit: { type: 'number', description: 'Cantidad máxima de deploys a revisar. Default: 10' }
       },
       required: ['project_key'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'vercel.deploy.inspect',
+    description: 'Inspecciona un deployment específico de Vercel por uid.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        deployment_uid: { type: 'string', description: 'UID del deployment, por ejemplo: dpl_xxx' },
+        project_key: { type: 'string', description: 'Opcional. Clave lógica del proyecto para usar teamId.' }
+      },
+      required: ['deployment_uid'],
       additionalProperties: false
     }
   }
@@ -179,6 +192,32 @@ async function getErrorDeployments(projectKey, limit = 10) {
   };
 }
 
+async function inspectDeployment(deploymentUid, projectKey) {
+  const project = projectKey ? getProject(projectKey) : getDefaultTeamProject();
+  const deployment = await vercelFetch(`/v13/deployments/${encodeURIComponent(deploymentUid)}`, project);
+  return {
+    ok: true,
+    deployment: {
+      uid: deployment.uid,
+      name: deployment.name,
+      url: deployment.url ? `https://${deployment.url}` : null,
+      state: deployment.readyState ?? deployment.state ?? null,
+      target: deployment.target ?? null,
+      created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null,
+      building_at: deployment.buildingAt ? new Date(deployment.buildingAt).toISOString() : null,
+      ready_at: deployment.ready ? new Date(deployment.ready).toISOString() : null,
+      error_code: deployment.errorCode ?? null,
+      error_message: deployment.errorMessage ?? null,
+      meta: deployment.meta ?? {},
+      creator: deployment.creator ? {
+        uid: deployment.creator.uid,
+        username: deployment.creator.username,
+        email: deployment.creator.email
+      } : null
+    }
+  };
+}
+
 async function callTool(name, args = {}) {
   if (name === 'health.check') {
     return { content: [{ type: 'text', text: JSON.stringify({ ok: true, service: 'ops-mcp', transport: 'http', status: 'alive' }, null, 2) }] };
@@ -192,9 +231,13 @@ async function callTool(name, args = {}) {
     if (!args.project_key) throw new Error('missing_project_key');
     return { content: [{ type: 'text', text: JSON.stringify(await listEnvVars(args.project_key), null, 2) }] };
   }
-  if (name === 'vercel.logs.errors') {
+  if (name === 'vercel.deploy.errors' || name === 'vercel.logs.errors') {
     if (!args.project_key) throw new Error('missing_project_key');
     return { content: [{ type: 'text', text: JSON.stringify(await getErrorDeployments(args.project_key, args.limit), null, 2) }] };
+  }
+  if (name === 'vercel.deploy.inspect') {
+    if (!args.deployment_uid) throw new Error('missing_deployment_uid');
+    return { content: [{ type: 'text', text: JSON.stringify(await inspectDeployment(args.deployment_uid, args.project_key), null, 2) }] };
   }
   throw new Error(`unknown_tool:${name}`);
 }
