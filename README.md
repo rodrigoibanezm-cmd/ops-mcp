@@ -1,6 +1,6 @@
 # ops-mcp
 
-MCP operacional remoto para Vercel y, luego, Upstash/Google.
+MCP operacional remoto para Vercel, Upstash y operaciones runtime.
 
 ## Decisión cerrada
 
@@ -13,7 +13,7 @@ MCP remoto por HTTP
 ↓
 ops-mcp hosteado en Vercel
 ↓
-Vercel API
+APIs operacionales
 ↓
 proyectos operados
 ```
@@ -33,20 +33,22 @@ GitHub ya se opera con el conector oficial de ChatGPT.
 
 Permitir que ChatGPT opere servicios externos desde herramientas controladas, sin entrar manualmente a cada consola.
 
-Primer foco:
+Focos actuales:
 
 ```txt
 Vercel:
 - deploys
-- logs
 - env vars
 - estado runtime
+
+Upstash:
+- lectura segura de keys Redis
 ```
 
 Después:
 
 ```txt
-- Upstash
+- Upstash WRITE
 - Google Drive/Sheets
 ```
 
@@ -54,7 +56,7 @@ Después:
 
 El MCP debe ser multi-proyecto.
 
-Toda tool recibe:
+Toda tool Vercel recibe:
 
 ```txt
 project_key
@@ -91,7 +93,13 @@ lib/mcp/jsonRpc.js
   Helpers JSON-RPC
 
 lib/mcp/tools.js
-  Registry + dispatch de tools
+  Agregador de registry + dispatch por dominio
+
+lib/mcp/auth.js
+  Validación de write_token para tools WRITE
+
+lib/mcp/response.js
+  Formato estándar MCP content[]
 
 lib/config/projects.js
   Resolución de project_key desde OPS_PROJECTS_JSON
@@ -99,42 +107,41 @@ lib/config/projects.js
 lib/vercel/client.js
   Cliente Vercel API
 
+lib/upstash/client.js
+  Cliente Upstash REST usando token read-only
+
 lib/tools/vercel/
   index.js
+  registry.js
+  handlers.js
   projects.js
   deployments.js
   env.js
+
+lib/tools/upstash/
+  registry.js
+  handlers.js
+  redis.js
 ```
 
 Reglas:
 
 ```txt
 - api/mcp.js no debe crecer con lógica operacional
+- lib/mcp/tools.js no debe acumular lógica de dominio
+- registry separado por dominio
+- handlers separados por dominio
 - evitar archivos sobre ~120 líneas
 - si un archivo crece, dividir por dominio antes de agregar más features
 - no mantener dos fuentes de verdad para la misma tool
 ```
 
-Nota actual:
+Notas actuales:
 
 ```txt
 lib/tools/vercel.js fue eliminado.
-La fuente de verdad Vercel ahora vive en lib/tools/vercel/.
-```
-
-Riesgo futuro:
-
-```txt
-lib/mcp/tools.js puede crecer demasiado cuando entren Upstash/Google.
-```
-
-Cuando eso pase, separar por dominio:
-
-```txt
-lib/tools/vercel.registry.js
-lib/tools/vercel.handlers.js
-lib/tools/upstash.registry.js
-lib/tools/upstash.handlers.js
+La fuente de verdad Vercel vive en lib/tools/vercel/.
+Upstash ya tiene registry y handlers propios.
 ```
 
 ## Configuración runtime
@@ -145,9 +152,18 @@ El proyecto usa variables de entorno en Vercel:
 VERCEL_TOKEN
 OPS_PROJECTS_JSON
 OPS_WRITE_TOKEN
+KV_REST_API_URL
+KV_REST_API_READ_ONLY_TOKEN
 ```
 
-`VERCEL_TOKEN` y `OPS_WRITE_TOKEN` no deben escribirse en GitHub.
+No deben escribirse en GitHub:
+
+```txt
+VERCEL_TOKEN
+OPS_WRITE_TOKEN
+KV_REST_API_TOKEN
+KV_REST_API_READ_ONLY_TOKEN
+```
 
 `OPS_PROJECTS_JSON` contiene el mapa lógico de proyectos:
 
@@ -167,9 +183,16 @@ SAFE no requiere write_token.
 WRITE requiere write_token.
 ```
 
-## Bloque SAFE implementado
+Upstash SAFE usa:
 
-Estas tools ya están implementadas y validadas.
+```txt
+KV_REST_API_URL
+KV_REST_API_READ_ONLY_TOKEN
+```
+
+No usa el token full para lectura.
+
+## Bloque SAFE implementado
 
 ### health.check
 
@@ -192,8 +215,6 @@ Sirve para descubrir:
 - framework
 - últimos deploys
 ```
-
-No modifica nada.
 
 ```txt
 Entrada: ninguna
@@ -248,7 +269,7 @@ Entrada:
 
 ```json
 {
-  "project_key": "helice"
+  "project_key": "ops"
 }
 ```
 
@@ -272,17 +293,6 @@ Entrada:
   "project_key": "helice",
   "limit": 10
 }
-```
-
-Devuelve:
-
-```txt
-- uid
-- name
-- url
-- state
-- target
-- created_at
 ```
 
 ```txt
@@ -329,6 +339,50 @@ Caso validado:
 ```txt
 error_code: conflicting_file_path
 error_message: api/dev/test-google.js conflicta con api/dev/test-google.py
+```
+
+### upstash.redis.get
+
+Lee una key de Upstash Redis usando token read-only.
+
+Entrada:
+
+```json
+{
+  "key": "nombre:de:key"
+}
+```
+
+Salida esperada:
+
+```json
+{
+  "ok": true,
+  "key": "nombre:de:key",
+  "found": true,
+  "value": "..."
+}
+```
+
+Si no existe:
+
+```json
+{
+  "ok": true,
+  "key": "nombre:de:key",
+  "found": false,
+  "value": null
+}
+```
+
+```txt
+Riesgo: SAFE
+```
+
+Regla:
+
+```txt
+No usar para leer keys que contengan secretos o credenciales.
 ```
 
 ## Bloque WRITE implementado
@@ -513,6 +567,7 @@ vercel.env.set
 vercel.env.update
 vercel.deploy.errors
 vercel.deploy.inspect
+upstash.redis.get
 ```
 
 ## Seguridad inicial
@@ -525,10 +580,12 @@ SAFE:
 - inspeccionar deploys
 - listar proyectos
 - listar env vars sin valores
+- leer keys Upstash con token read-only
 
 WRITE:
 - crear env vars con write_token
 - actualizar env vars por env_id con write_token
+- Upstash set futuro con write_token
 - trigger deploy futuro, cuando esté correctamente resuelto
 
 DANGER:
@@ -536,6 +593,7 @@ DANGER:
 - borrar dominios
 - borrar datos
 - borrar env vars
+- borrar keys Upstash
 ```
 
 No habilitar DANGER en MVP.
@@ -566,4 +624,10 @@ vercel.env.update OK
 WRITE sin token bloqueado
 WRITE con token OK
 SAFE sin token OK
+```
+
+Pendiente al cerrar este bloque:
+
+```txt
+probar upstash.redis.get con una key real o inexistente
 ```
