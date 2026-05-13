@@ -382,6 +382,62 @@ TEST_MCP creado en ops-mcp para target preview.
 TEST_EMPTY_MCP creado en ops-mcp con value vacío para target preview.
 ```
 
+### vercel.env.update
+
+Actualiza una variable de entorno existente usando `env_id`.
+
+No actualiza por `key` para evitar tocar la variable equivocada.
+No borra variables.
+No dispara redeploy automático.
+No devuelve el valor secreto.
+
+Entrada:
+
+```json
+{
+  "project_key": "ops",
+  "env_id": "P9waWChWwHzuM75I",
+  "value": "updated-from-mcp",
+  "target": ["preview"],
+  "type": "encrypted"
+}
+```
+
+Validaciones:
+
+```txt
+- project_key obligatorio
+- env_id obligatorio
+- value obligatorio, pero acepta "", 0 y false
+- target opcional
+- target permitido si viene: production, preview, development
+- type permitido actualmente: encrypted
+```
+
+Salida segura:
+
+```json
+{
+  "ok": true,
+  "project_key": "ops",
+  "env_id": "P9waWChWwHzuM75I",
+  "target": ["preview"],
+  "type": "encrypted",
+  "updated": true,
+  "requires_redeploy": true
+}
+```
+
+```txt
+Riesgo: WRITE
+```
+
+Caso validado:
+
+```txt
+TEST_EMPTY_MCP actualizado por env_id sin exponer value.
+```
+
 ## Intento descartado
 
 ### vercel.deploy.trigger
@@ -420,6 +476,7 @@ vercel.projects.list
 vercel.deploy.latest
 vercel.env.list
 vercel.env.set
+vercel.env.update
 vercel.deploy.errors
 vercel.deploy.inspect
 ```
@@ -437,6 +494,7 @@ SAFE:
 
 WRITE:
 - crear env vars
+- actualizar env vars por env_id
 - trigger deploy futuro, cuando esté correctamente resuelto
 
 DANGER:
@@ -464,10 +522,11 @@ La lista de tools solo se obtiene por JSON-RPC usando:
 tools/list
 ```
 
-Última validación post-refactor:
+Últimas validaciones:
 
 ```txt
 tools/list OK
 vercel.deploy.latest OK
 vercel.env.list OK
+vercel.env.update OK
 ```
