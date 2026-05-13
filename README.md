@@ -64,10 +64,103 @@ Y resuelve IDs desde configuración.
 
 Nunca hardcodear proyectos dentro de las tools.
 
-## Primera tool
+## Configuración runtime
+
+El proyecto usa variables de entorno en Vercel:
 
 ```txt
-vercel.deploy.latest
+VERCEL_TOKEN
+OPS_PROJECTS_JSON
+```
+
+`VERCEL_TOKEN` no debe escribirse en GitHub.
+
+`OPS_PROJECTS_JSON` contiene el mapa lógico de proyectos:
+
+```json
+{
+  "helice": {
+    "vercel_project_id": "prj_xxx",
+    "vercel_team_id": "team_xxx"
+  }
+}
+```
+
+## Bloque SAFE implementado
+
+Estas tools ya están implementadas y validadas.
+
+### health.check
+
+Verifica que el MCP esté vivo.
+
+```txt
+Entrada: ninguna
+Riesgo: SAFE
+```
+
+### vercel.projects.list
+
+Lista proyectos accesibles por el token de Vercel.
+
+Sirve para descubrir:
+
+```txt
+- project id
+- nombre del proyecto
+- framework
+- últimos deploys
+```
+
+No modifica nada.
+
+```txt
+Entrada: ninguna
+Riesgo: SAFE
+```
+
+### vercel.deploy.latest
+
+Devuelve el último deploy de un proyecto.
+
+Entrada:
+
+```json
+{
+  "project_key": "helice"
+}
+```
+
+Devuelve:
+
+```txt
+- uid
+- name
+- url
+- state
+- target
+- created_at
+```
+
+```txt
+Riesgo: SAFE
+```
+
+### vercel.env.list
+
+Lista variables de entorno de un proyecto.
+
+No devuelve valores secretos.
+
+Devuelve solo metadata:
+
+```txt
+- id
+- key
+- target
+- type
+- created_at
+- updated_at
 ```
 
 Entrada:
@@ -78,19 +171,92 @@ Entrada:
 }
 ```
 
-Salida esperada:
+```txt
+Riesgo: SAFE
+```
+
+### vercel.deploy.errors
+
+Lista deploys recientes en estado:
+
+```txt
+ERROR
+CANCELED
+```
+
+Entrada:
 
 ```json
 {
-  "ok": true,
   "project_key": "helice",
-  "deployment": {
-    "id": "...",
-    "url": "...",
-    "state": "READY",
-    "created_at": "..."
-  }
+  "limit": 10
 }
+```
+
+Devuelve:
+
+```txt
+- uid
+- name
+- url
+- state
+- target
+- created_at
+```
+
+```txt
+Riesgo: SAFE
+```
+
+Nota: `vercel.logs.errors` queda solo como alias interno legacy. No se publica en tools/list.
+
+### vercel.deploy.inspect
+
+Inspecciona un deployment específico por UID.
+
+Entrada:
+
+```json
+{
+  "deployment_uid": "dpl_xxx",
+  "project_key": "helice"
+}
+```
+
+Devuelve:
+
+```txt
+- state
+- target
+- created_at
+- building_at
+- ready_at
+- error_code
+- error_message
+- meta de GitHub
+- creator
+```
+
+```txt
+Riesgo: SAFE
+```
+
+Caso validado:
+
+```txt
+error_code: conflicting_file_path
+error_message: api/dev/test-google.js conflicta con api/dev/test-google.py
+```
+
+## Tools visibles actuales
+
+```txt
+health.check
+vercel.projects.list
+vercel.deploy.latest
+vercel.env.list
+vercel.deploy.errors
+vercel.deploy.inspect
 ```
 
 ## Seguridad inicial
@@ -100,8 +266,9 @@ Partir con tools SAFE.
 ```txt
 SAFE:
 - leer deploys
-- leer logs
-- listar env vars
+- inspeccionar deploys
+- listar proyectos
+- listar env vars sin valores
 
 WRITE:
 - set env vars
@@ -121,4 +288,4 @@ Repo cloud-first.
 
 Los archivos se editan desde ChatGPT usando el conector oficial de GitHub.
 
-El MCP debe quedar hosteado y conectable desde ChatGPT por URL.
+El MCP está hosteado en Vercel y expone endpoint HTTP.
