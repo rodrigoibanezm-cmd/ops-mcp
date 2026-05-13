@@ -456,5 +456,5 @@ WRITE con token OK
 SAFE sin token OK
 upstash.redis.get OK
 upstash.redis.scan OK
-upstash.redis.set pendiente de validación runtime
+upstash.redis.set OK
 ```
