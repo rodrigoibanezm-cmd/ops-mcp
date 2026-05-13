@@ -99,14 +99,27 @@ lib/config/projects.js
 lib/vercel/client.js
   Cliente Vercel API
 
-lib/tools/vercel.js
-  Lógica operacional Vercel SAFE/WRITE
+lib/tools/vercel/
+  index.js
+  projects.js
+  deployments.js
+  env.js
 ```
 
-Regla:
+Reglas:
 
 ```txt
-Si una tool nueva hace crecer api/mcp.js, está mal ubicada.
+- api/mcp.js no debe crecer con lógica operacional
+- evitar archivos sobre ~120 líneas
+- si un archivo crece, dividir por dominio antes de agregar más features
+- no mantener dos fuentes de verdad para la misma tool
+```
+
+Nota actual:
+
+```txt
+lib/tools/vercel.js fue eliminado.
+La fuente de verdad Vercel ahora vive en lib/tools/vercel/.
 ```
 
 Riesgo futuro:
@@ -362,10 +375,41 @@ Salida segura:
 Riesgo: WRITE
 ```
 
-Caso validado:
+Casos validados:
 
 ```txt
 TEST_MCP creado en ops-mcp para target preview.
+TEST_EMPTY_MCP creado en ops-mcp con value vacío para target preview.
+```
+
+## Intento descartado
+
+### vercel.deploy.trigger
+
+Se intentó implementar redeploy usando:
+
+```txt
+POST /v13/deployments
+```
+
+Resultado:
+
+```txt
+vercel_api_error:400:Invalid request: "files" field should be an array
+```
+
+Diagnóstico:
+
+```txt
+Ese endpoint crea deployments desde archivos.
+No sirve así para redeploy de proyecto conectado a GitHub.
+```
+
+Decisión:
+
+```txt
+vercel.deploy.trigger fue removido de tools/list y del código.
+Queda pendiente hasta encontrar el endpoint correcto.
 ```
 
 ## Tools visibles actuales
@@ -393,7 +437,7 @@ SAFE:
 
 WRITE:
 - crear env vars
-- trigger deploy futuro
+- trigger deploy futuro, cuando esté correctamente resuelto
 
 DANGER:
 - borrar proyectos
@@ -418,4 +462,12 @@ La lista de tools solo se obtiene por JSON-RPC usando:
 
 ```txt
 tools/list
+```
+
+Última validación post-refactor:
+
+```txt
+tools/list OK
+vercel.deploy.latest OK
+vercel.env.list OK
 ```
