@@ -44,28 +44,14 @@ Vercel:
 Upstash:
 - lectura segura de keys Redis
 - escaneo seguro de keys Redis
+- escritura controlada de keys Redis
 ```
 
 Después:
 
 ```txt
-- Upstash WRITE
 - Google Drive/Sheets
 ```
-
-## Principio de diseño
-
-El MCP debe ser multi-proyecto.
-
-Toda tool Vercel recibe:
-
-```txt
-project_key
-```
-
-Y resuelve IDs desde configuración.
-
-Nunca hardcodear proyectos dentro de las tools.
 
 ## Arquitectura modular
 
@@ -109,7 +95,7 @@ lib/vercel/client.js
   Cliente Vercel API
 
 lib/upstash/client.js
-  Cliente Upstash REST usando token read-only
+  Cliente Upstash REST read/write
 
 lib/tools/vercel/
   index.js
@@ -122,7 +108,8 @@ lib/tools/vercel/
 lib/tools/upstash/
   registry.js
   handlers.js
-  redis.js
+  read.js
+  write.js
 ```
 
 Reglas:
@@ -137,14 +124,6 @@ Reglas:
 - no mantener dos fuentes de verdad para la misma tool
 ```
 
-Notas actuales:
-
-```txt
-lib/tools/vercel.js fue eliminado.
-La fuente de verdad Vercel vive en lib/tools/vercel/.
-Upstash ya tiene registry y handlers propios.
-```
-
 ## Configuración runtime
 
 El proyecto usa variables de entorno en Vercel:
@@ -154,6 +133,7 @@ VERCEL_TOKEN
 OPS_PROJECTS_JSON
 OPS_WRITE_TOKEN
 KV_REST_API_URL
+KV_REST_API_TOKEN
 KV_REST_API_READ_ONLY_TOKEN
 ```
 
@@ -164,17 +144,6 @@ VERCEL_TOKEN
 OPS_WRITE_TOKEN
 KV_REST_API_TOKEN
 KV_REST_API_READ_ONLY_TOKEN
-```
-
-`OPS_PROJECTS_JSON` contiene el mapa lógico de proyectos:
-
-```json
-{
-  "helice": {
-    "vercel_project_id": "prj_xxx",
-    "vercel_team_id": "team_xxx"
-  }
-}
 ```
 
 `OPS_WRITE_TOKEN` protege tools WRITE.
@@ -191,7 +160,12 @@ KV_REST_API_URL
 KV_REST_API_READ_ONLY_TOKEN
 ```
 
-No usa el token full para lectura.
+Upstash WRITE usa:
+
+```txt
+KV_REST_API_URL
+KV_REST_API_TOKEN
+```
 
 ## Bloque SAFE implementado
 
@@ -207,15 +181,6 @@ Riesgo: SAFE
 ### vercel.projects.list
 
 Lista proyectos accesibles por el token de Vercel.
-
-Sirve para descubrir:
-
-```txt
-- project id
-- nombre del proyecto
-- framework
-- últimos deploys
-```
 
 ```txt
 Entrada: ninguna
@@ -234,17 +199,6 @@ Entrada:
 }
 ```
 
-Devuelve:
-
-```txt
-- uid
-- name
-- url
-- state
-- target
-- created_at
-```
-
 ```txt
 Riesgo: SAFE
 ```
@@ -254,17 +208,6 @@ Riesgo: SAFE
 Lista variables de entorno de un proyecto.
 
 No devuelve valores secretos.
-
-Devuelve solo metadata:
-
-```txt
-- id
-- key
-- target
-- type
-- created_at
-- updated_at
-```
 
 Entrada:
 
@@ -280,12 +223,7 @@ Riesgo: SAFE
 
 ### vercel.deploy.errors
 
-Lista deploys recientes en estado:
-
-```txt
-ERROR
-CANCELED
-```
+Lista deploys recientes en estado ERROR o CANCELED.
 
 Entrada:
 
@@ -300,8 +238,6 @@ Entrada:
 Riesgo: SAFE
 ```
 
-Nota: `vercel.logs.errors` queda solo como alias interno legacy. No se publica en tools/list.
-
 ### vercel.deploy.inspect
 
 Inspecciona un deployment específico por UID.
@@ -315,31 +251,8 @@ Entrada:
 }
 ```
 
-`project_key` es obligatorio para evitar ambigüedad multi-proyecto.
-
-Devuelve:
-
-```txt
-- state
-- target
-- created_at
-- building_at
-- ready_at
-- error_code
-- error_message
-- meta de GitHub
-- creator
-```
-
 ```txt
 Riesgo: SAFE
-```
-
-Caso validado:
-
-```txt
-error_code: conflicting_file_path
-error_message: api/dev/test-google.js conflicta con api/dev/test-google.py
 ```
 
 ### upstash.redis.get
@@ -354,28 +267,6 @@ Entrada:
 }
 ```
 
-Salida esperada:
-
-```json
-{
-  "ok": true,
-  "key": "nombre:de:key",
-  "found": true,
-  "value": "..."
-}
-```
-
-Si no existe:
-
-```json
-{
-  "ok": true,
-  "key": "nombre:de:key",
-  "found": false,
-  "value": null
-}
-```
-
 ```txt
 Riesgo: SAFE
 ```
@@ -384,12 +275,6 @@ Regla:
 
 ```txt
 No usar para leer keys que contengan secretos o credenciales.
-```
-
-Caso validado:
-
-```txt
-key inexistente → found: false / value: null
 ```
 
 ### upstash.redis.scan
@@ -415,29 +300,8 @@ Reglas:
 - devuelve cursor para paginación
 ```
 
-Salida esperada:
-
-```json
-{
-  "ok": true,
-  "cursor": "3880051667400143572",
-  "keys": ["places:reviews:..."],
-  "count": 20
-}
-```
-
 ```txt
 Riesgo: SAFE
-```
-
-Caso validado:
-
-```txt
-scan OK
-count: 20
-cursor devuelto
-keys reales detectadas
-no devuelve values
 ```
 
 ## Bloque WRITE implementado
@@ -456,14 +320,6 @@ OPS_WRITE_TOKEN
 
 No se devuelve ni se loguea.
 
-Validación confirmada:
-
-```txt
-WRITE sin write_token → invalid_write_token
-WRITE con write_token → OK
-SAFE sin write_token → OK
-```
-
 ### vercel.env.set
 
 Crea una variable de entorno nueva en Vercel.
@@ -473,74 +329,33 @@ No borra variables.
 No dispara redeploy automático.
 No devuelve el valor secreto.
 
-Entrada:
-
-```json
-{
-  "project_key": "ops",
-  "key": "TEST_MCP",
-  "value": "hello-world",
-  "target": ["preview"],
-  "type": "encrypted",
-  "write_token": "..."
-}
-```
-
-Validaciones:
-
-```txt
-- project_key obligatorio
-- key obligatorio
-- value obligatorio, pero acepta "", 0 y false
-- target obligatorio
-- target permitido: production, preview, development
-- type permitido actualmente: encrypted
-- write_token obligatorio
-```
-
-Salida segura:
-
-```json
-{
-  "ok": true,
-  "project_key": "ops",
-  "key": "TEST_MCP",
-  "target": ["preview"],
-  "type": "encrypted",
-  "created": true,
-  "requires_redeploy": true
-}
-```
-
 ```txt
 Riesgo: WRITE
-```
-
-Casos validados:
-
-```txt
-TEST_MCP creado en ops-mcp para target preview.
-TEST_EMPTY_MCP creado en ops-mcp con value vacío para target preview.
 ```
 
 ### vercel.env.update
 
 Actualiza una variable de entorno existente usando `env_id`.
 
-No actualiza por `key` para evitar tocar la variable equivocada.
+No actualiza por `key`.
 No borra variables.
 No dispara redeploy automático.
 No devuelve el valor secreto.
+
+```txt
+Riesgo: WRITE
+```
+
+### upstash.redis.set
+
+Escribe una key en Upstash Redis usando token WRITE.
 
 Entrada:
 
 ```json
 {
-  "project_key": "ops",
-  "env_id": "P9waWChWwHzuM75I",
-  "value": "updated-from-mcp",
-  "target": ["preview"],
-  "type": "encrypted",
+  "key": "test:mcp",
+  "value": "hello",
   "write_token": "..."
 }
 ```
@@ -548,12 +363,8 @@ Entrada:
 Validaciones:
 
 ```txt
-- project_key obligatorio
-- env_id obligatorio
+- key obligatorio
 - value obligatorio, pero acepta "", 0 y false
-- target opcional
-- target permitido si viene: production, preview, development
-- type permitido actualmente: encrypted
 - write_token obligatorio
 ```
 
@@ -562,12 +373,8 @@ Salida segura:
 ```json
 {
   "ok": true,
-  "project_key": "ops",
-  "env_id": "P9waWChWwHzuM75I",
-  "target": ["preview"],
-  "type": "encrypted",
-  "updated": true,
-  "requires_redeploy": true
+  "key": "test:mcp",
+  "updated": true
 }
 ```
 
@@ -575,40 +382,14 @@ Salida segura:
 Riesgo: WRITE
 ```
 
-Caso validado:
+No implementa:
 
 ```txt
-TEST_EMPTY_MCP actualizado por env_id sin exponer value.
-```
-
-## Intento descartado
-
-### vercel.deploy.trigger
-
-Se intentó implementar redeploy usando:
-
-```txt
-POST /v13/deployments
-```
-
-Resultado:
-
-```txt
-vercel_api_error:400:Invalid request: "files" field should be an array
-```
-
-Diagnóstico:
-
-```txt
-Ese endpoint crea deployments desde archivos.
-No sirve así para redeploy de proyecto conectado a GitHub.
-```
-
-Decisión:
-
-```txt
-vercel.deploy.trigger fue removido de tools/list y del código.
-Queda pendiente hasta encontrar el endpoint correcto.
+- delete
+- ttl
+- mset
+- json helper
+- namespaces
 ```
 
 ## Tools visibles actuales
@@ -624,6 +405,7 @@ vercel.deploy.errors
 vercel.deploy.inspect
 upstash.redis.get
 upstash.redis.scan
+upstash.redis.set
 ```
 
 ## Seguridad inicial
@@ -642,8 +424,7 @@ SAFE:
 WRITE:
 - crear env vars con write_token
 - actualizar env vars por env_id con write_token
-- Upstash set futuro con write_token
-- trigger deploy futuro, cuando esté correctamente resuelto
+- escribir keys Upstash con write_token
 
 DANGER:
 - borrar proyectos
@@ -663,14 +444,6 @@ Los archivos se editan desde ChatGPT usando el conector oficial de GitHub.
 
 El MCP está hosteado en Vercel y expone endpoint HTTP.
 
-`GET /api/mcp` expone solo health básico.
-
-La lista de tools solo se obtiene por JSON-RPC usando:
-
-```txt
-tools/list
-```
-
 Últimas validaciones:
 
 ```txt
@@ -683,4 +456,5 @@ WRITE con token OK
 SAFE sin token OK
 upstash.redis.get OK
 upstash.redis.scan OK
+upstash.redis.set pendiente de validación runtime
 ```
