@@ -1,264 +1,61 @@
-const tools = [
-  {
-    name: 'health.check',
-    description: 'Verifica que el MCP esté vivo.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'vercel.projects.list',
-    description: 'Lista proyectos accesibles en Vercel para armar OPS_PROJECTS_JSON sin adivinar IDs.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'vercel.deploy.latest',
-    description: 'Devuelve el último deploy de Vercel para un project_key.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_key: { type: 'string', description: 'Clave lógica del proyecto, por ejemplo: helice' }
-      },
-      required: ['project_key'],
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'vercel.env.list',
-    description: 'Lista variables de entorno de un proyecto Vercel sin revelar valores secretos.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_key: { type: 'string', description: 'Clave lógica del proyecto, por ejemplo: helice' }
-      },
-      required: ['project_key'],
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'vercel.deploy.errors',
-    description: 'Devuelve deploys recientes con estado ERROR o CANCELED para un proyecto.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_key: { type: 'string', description: 'Clave lógica del proyecto, por ejemplo: helice' },
-        limit: { type: 'number', description: 'Cantidad máxima de deploys a revisar. Default: 10' }
-      },
-      required: ['project_key'],
-      additionalProperties: false
-    }
-  },
-  {
-    name: 'vercel.deploy.inspect',
-    description: 'Inspecciona un deployment específico de Vercel por uid.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        deployment_uid: { type: 'string', description: 'UID del deployment, por ejemplo: dpl_xxx' },
-        project_key: { type: 'string', description: 'Opcional. Clave lógica del proyecto para usar teamId.' }
-      },
-      required: ['deployment_uid'],
-      additionalProperties: false
-    }
-  }
-];
-
-function jsonRpc(id, result) {
-  return { jsonrpc: '2.0', id: id ?? null, result };
-}
-
-function jsonRpcError(id, code, message) {
-  return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
-}
-
-function getProjectsConfig() {
-  if (!process.env.OPS_PROJECTS_JSON) throw new Error('missing_OPS_PROJECTS_JSON');
-  try { return JSON.parse(process.env.OPS_PROJECTS_JSON); } catch { throw new Error('invalid_OPS_PROJECTS_JSON'); }
-}
-
-function getProject(projectKey) {
-  const projects = getProjectsConfig();
-  const project = projects[projectKey];
-  if (!project) throw new Error(`unknown_project_key:${projectKey}`);
-  if (!project.vercel_project_id) throw new Error(`missing_vercel_project_id:${projectKey}`);
-  return project;
-}
-
-function getDefaultTeamProject() {
-  const projects = getProjectsConfig();
-  return Object.values(projects)[0] ?? {};
-}
-
-async function vercelFetch(path, project = {}) {
-  if (!process.env.VERCEL_TOKEN) throw new Error('missing_VERCEL_TOKEN');
-  const url = new URL(`https://api.vercel.com${path}`);
-  if (project.vercel_team_id) url.searchParams.set('teamId', project.vercel_team_id);
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}`, 'Content-Type': 'application/json' }
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(`vercel_api_error:${response.status}:${data?.error?.message ?? 'unknown'}`);
-  return data;
-}
-
-async function listProjects() {
-  const data = await vercelFetch('/v9/projects?limit=100', getDefaultTeamProject());
-  const projects = data?.projects ?? [];
-  return {
-    ok: true,
-    count: projects.length,
-    projects: projects.map((project) => ({
-      id: project.id,
-      name: project.name,
-      framework: project.framework ?? null,
-      latest_deployments: (project.latestDeployments ?? []).slice(0, 3).map((deployment) => ({
-        uid: deployment.uid,
-        name: deployment.name,
-        url: deployment.url ? `https://${deployment.url}` : null,
-        state: deployment.state,
-        target: deployment.target ?? null,
-        created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
-      }))
-    }))
-  };
-}
-
-async function getLatestDeployment(projectKey) {
-  const project = getProject(projectKey);
-  const data = await vercelFetch(`/v6/deployments?projectId=${encodeURIComponent(project.vercel_project_id)}&limit=1`, project);
-  const deployment = data?.deployments?.[0];
-  if (!deployment) return { ok: false, project_key: projectKey, reason: 'no_deployments_found' };
-  return {
-    ok: true,
-    project_key: projectKey,
-    deployment: {
-      uid: deployment.uid,
-      name: deployment.name,
-      url: deployment.url ? `https://${deployment.url}` : null,
-      state: deployment.state,
-      target: deployment.target ?? null,
-      created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
-    }
-  };
-}
-
-async function listEnvVars(projectKey) {
-  const project = getProject(projectKey);
-  const data = await vercelFetch(`/v9/projects/${encodeURIComponent(project.vercel_project_id)}/env`, project);
-  const envs = data?.envs ?? [];
-  return {
-    ok: true,
-    project_key: projectKey,
-    count: envs.length,
-    envs: envs.map((env) => ({
-      id: env.id,
-      key: env.key,
-      target: env.target,
-      type: env.type,
-      configuration_id: env.configurationId ?? null,
-      created_at: env.createdAt ? new Date(env.createdAt).toISOString() : null,
-      updated_at: env.updatedAt ? new Date(env.updatedAt).toISOString() : null
-    }))
-  };
-}
-
-async function getErrorDeployments(projectKey, limit = 10) {
-  const project = getProject(projectKey);
-  const safeLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
-  const data = await vercelFetch(`/v6/deployments?projectId=${encodeURIComponent(project.vercel_project_id)}&limit=${safeLimit}`, project);
-  const deployments = data?.deployments ?? [];
-  const errors = deployments.filter((deployment) => ['ERROR', 'CANCELED'].includes(deployment.state));
-  return {
-    ok: true,
-    project_key: projectKey,
-    checked: deployments.length,
-    count: errors.length,
-    errors: errors.map((deployment) => ({
-      uid: deployment.uid,
-      name: deployment.name,
-      url: deployment.url ? `https://${deployment.url}` : null,
-      state: deployment.state,
-      target: deployment.target ?? null,
-      created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
-    }))
-  };
-}
-
-async function inspectDeployment(deploymentUid, projectKey) {
-  const project = projectKey ? getProject(projectKey) : getDefaultTeamProject();
-  const deployment = await vercelFetch(`/v13/deployments/${encodeURIComponent(deploymentUid)}`, project);
-  return {
-    ok: true,
-    deployment: {
-      uid: deployment.uid,
-      name: deployment.name,
-      url: deployment.url ? `https://${deployment.url}` : null,
-      state: deployment.readyState ?? deployment.state ?? null,
-      target: deployment.target ?? null,
-      created_at: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null,
-      building_at: deployment.buildingAt ? new Date(deployment.buildingAt).toISOString() : null,
-      ready_at: deployment.ready ? new Date(deployment.ready).toISOString() : null,
-      error_code: deployment.errorCode ?? null,
-      error_message: deployment.errorMessage ?? null,
-      meta: deployment.meta ?? {},
-      creator: deployment.creator ? {
-        uid: deployment.creator.uid,
-        username: deployment.creator.username,
-        email: deployment.creator.email
-      } : null
-    }
-  };
-}
-
-async function callTool(name, args = {}) {
-  if (name === 'health.check') {
-    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, service: 'ops-mcp', transport: 'http', status: 'alive' }, null, 2) }] };
-  }
-  if (name === 'vercel.projects.list') return { content: [{ type: 'text', text: JSON.stringify(await listProjects(), null, 2) }] };
-  if (name === 'vercel.deploy.latest') {
-    if (!args.project_key) throw new Error('missing_project_key');
-    return { content: [{ type: 'text', text: JSON.stringify(await getLatestDeployment(args.project_key), null, 2) }] };
-  }
-  if (name === 'vercel.env.list') {
-    if (!args.project_key) throw new Error('missing_project_key');
-    return { content: [{ type: 'text', text: JSON.stringify(await listEnvVars(args.project_key), null, 2) }] };
-  }
-  if (name === 'vercel.deploy.errors' || name === 'vercel.logs.errors') {
-    if (!args.project_key) throw new Error('missing_project_key');
-    return { content: [{ type: 'text', text: JSON.stringify(await getErrorDeployments(args.project_key, args.limit), null, 2) }] };
-  }
-  if (name === 'vercel.deploy.inspect') {
-    if (!args.deployment_uid) throw new Error('missing_deployment_uid');
-    return { content: [{ type: 'text', text: JSON.stringify(await inspectDeployment(args.deployment_uid, args.project_key), null, 2) }] };
-  }
-  throw new Error(`unknown_tool:${name}`);
-}
+import { jsonRpc, jsonRpcError } from '../lib/mcp/jsonRpc.js';
+import { tools, callTool } from '../lib/mcp/tools.js';
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    return res.status(200).json({ ok: true, service: 'ops-mcp', transport: 'http', status: 'alive', endpoint: '/api/mcp', tools: tools.map((tool) => tool.name) });
+    return res.status(200).json({
+      ok: true,
+      service: 'ops-mcp',
+      transport: 'http',
+      status: 'alive',
+      endpoint: '/api/mcp',
+      tools: tools.map((tool) => tool.name)
+    });
   }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'GET, POST');
-    return res.status(405).json({ ok: false, error: 'method_not_allowed' });
+
+    return res.status(405).json({
+      ok: false,
+      error: 'method_not_allowed'
+    });
   }
+
   const { id, method, params } = req.body ?? {};
+
   try {
     if (method === 'initialize') {
-      return res.status(200).json(jsonRpc(id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'ops-mcp', version: '1.0.0' } }));
+      return res.status(200).json(
+        jsonRpc(id, {
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            tools: {}
+          },
+          serverInfo: {
+            name: 'ops-mcp',
+            version: '1.0.0'
+          }
+        })
+      );
     }
-    if (method === 'tools/list') return res.status(200).json(jsonRpc(id, { tools }));
-    if (method === 'tools/call') return res.status(200).json(jsonRpc(id, await callTool(params?.name, params?.arguments ?? {})));
-    return res.status(200).json(jsonRpcError(id, -32601, `method_not_found:${method}`));
+
+    if (method === 'tools/list') {
+      return res.status(200).json(jsonRpc(id, { tools }));
+    }
+
+    if (method === 'tools/call') {
+      return res.status(200).json(
+        jsonRpc(id, await callTool(params?.name, params?.arguments ?? {}))
+      );
+    }
+
+    return res.status(200).json(
+      jsonRpcError(id, -32601, `method_not_found:${method}`)
+    );
   } catch (error) {
-    return res.status(200).json(jsonRpcError(id, -32000, error.message));
+    return res.status(200).json(
+      jsonRpcError(id, -32000, error.message)
+    );
   }
 }
