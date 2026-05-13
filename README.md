@@ -144,9 +144,10 @@ El proyecto usa variables de entorno en Vercel:
 ```txt
 VERCEL_TOKEN
 OPS_PROJECTS_JSON
+OPS_WRITE_TOKEN
 ```
 
-`VERCEL_TOKEN` no debe escribirse en GitHub.
+`VERCEL_TOKEN` y `OPS_WRITE_TOKEN` no deben escribirse en GitHub.
 
 `OPS_PROJECTS_JSON` contiene el mapa lógico de proyectos:
 
@@ -157,6 +158,13 @@ OPS_PROJECTS_JSON
     "vercel_team_id": "team_xxx"
   }
 }
+```
+
+`OPS_WRITE_TOKEN` protege tools WRITE.
+
+```txt
+SAFE no requiere write_token.
+WRITE requiere write_token.
 ```
 
 ## Bloque SAFE implementado
@@ -325,6 +333,28 @@ error_message: api/dev/test-google.js conflicta con api/dev/test-google.py
 
 ## Bloque WRITE implementado
 
+Las tools WRITE exigen:
+
+```txt
+write_token
+```
+
+El valor se compara contra:
+
+```txt
+OPS_WRITE_TOKEN
+```
+
+No se devuelve ni se loguea.
+
+Validación confirmada:
+
+```txt
+WRITE sin write_token → invalid_write_token
+WRITE con write_token → OK
+SAFE sin write_token → OK
+```
+
 ### vercel.env.set
 
 Crea una variable de entorno nueva en Vercel.
@@ -342,7 +372,8 @@ Entrada:
   "key": "TEST_MCP",
   "value": "hello-world",
   "target": ["preview"],
-  "type": "encrypted"
+  "type": "encrypted",
+  "write_token": "..."
 }
 ```
 
@@ -355,6 +386,7 @@ Validaciones:
 - target obligatorio
 - target permitido: production, preview, development
 - type permitido actualmente: encrypted
+- write_token obligatorio
 ```
 
 Salida segura:
@@ -399,7 +431,8 @@ Entrada:
   "env_id": "P9waWChWwHzuM75I",
   "value": "updated-from-mcp",
   "target": ["preview"],
-  "type": "encrypted"
+  "type": "encrypted",
+  "write_token": "..."
 }
 ```
 
@@ -412,6 +445,7 @@ Validaciones:
 - target opcional
 - target permitido si viene: production, preview, development
 - type permitido actualmente: encrypted
+- write_token obligatorio
 ```
 
 Salida segura:
@@ -493,8 +527,8 @@ SAFE:
 - listar env vars sin valores
 
 WRITE:
-- crear env vars
-- actualizar env vars por env_id
+- crear env vars con write_token
+- actualizar env vars por env_id con write_token
 - trigger deploy futuro, cuando esté correctamente resuelto
 
 DANGER:
@@ -529,4 +563,7 @@ tools/list OK
 vercel.deploy.latest OK
 vercel.env.list OK
 vercel.env.update OK
+WRITE sin token bloqueado
+WRITE con token OK
+SAFE sin token OK
 ```
