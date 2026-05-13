@@ -43,6 +43,7 @@ Vercel:
 
 Upstash:
 - lectura segura de keys Redis
+- escaneo seguro de keys Redis
 ```
 
 Después:
@@ -385,6 +386,60 @@ Regla:
 No usar para leer keys que contengan secretos o credenciales.
 ```
 
+Caso validado:
+
+```txt
+key inexistente → found: false / value: null
+```
+
+### upstash.redis.scan
+
+Lista keys de Upstash Redis por patrón sin devolver valores.
+
+Entrada:
+
+```json
+{
+  "cursor": "0",
+  "match": "places:*",
+  "count": 20
+}
+```
+
+Reglas:
+
+```txt
+- usa token read-only
+- no devuelve values
+- count máximo: 100
+- devuelve cursor para paginación
+```
+
+Salida esperada:
+
+```json
+{
+  "ok": true,
+  "cursor": "3880051667400143572",
+  "keys": ["places:reviews:..."],
+  "count": 20
+}
+```
+
+```txt
+Riesgo: SAFE
+```
+
+Caso validado:
+
+```txt
+scan OK
+count: 20
+cursor devuelto
+keys reales detectadas
+no devuelve values
+```
+
 ## Bloque WRITE implementado
 
 Las tools WRITE exigen:
@@ -568,6 +623,7 @@ vercel.env.update
 vercel.deploy.errors
 vercel.deploy.inspect
 upstash.redis.get
+upstash.redis.scan
 ```
 
 ## Seguridad inicial
@@ -581,6 +637,7 @@ SAFE:
 - listar proyectos
 - listar env vars sin valores
 - leer keys Upstash con token read-only
+- escanear keys Upstash con token read-only
 
 WRITE:
 - crear env vars con write_token
@@ -624,10 +681,6 @@ vercel.env.update OK
 WRITE sin token bloqueado
 WRITE con token OK
 SAFE sin token OK
-```
-
-Pendiente al cerrar este bloque:
-
-```txt
-probar upstash.redis.get con una key real o inexistente
+upstash.redis.get OK
+upstash.redis.scan OK
 ```
