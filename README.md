@@ -100,7 +100,7 @@ lib/vercel/client.js
   Cliente Vercel API
 
 lib/tools/vercel.js
-  Lógica operacional Vercel SAFE
+  Lógica operacional Vercel SAFE/WRITE
 ```
 
 Regla:
@@ -283,6 +283,8 @@ Entrada:
 }
 ```
 
+`project_key` es obligatorio para evitar ambigüedad multi-proyecto.
+
 Devuelve:
 
 ```txt
@@ -308,6 +310,64 @@ error_code: conflicting_file_path
 error_message: api/dev/test-google.js conflicta con api/dev/test-google.py
 ```
 
+## Bloque WRITE implementado
+
+### vercel.env.set
+
+Crea una variable de entorno nueva en Vercel.
+
+No actualiza variables existentes.
+No borra variables.
+No dispara redeploy automático.
+No devuelve el valor secreto.
+
+Entrada:
+
+```json
+{
+  "project_key": "ops",
+  "key": "TEST_MCP",
+  "value": "hello-world",
+  "target": ["preview"],
+  "type": "encrypted"
+}
+```
+
+Validaciones:
+
+```txt
+- project_key obligatorio
+- key obligatorio
+- value obligatorio, pero acepta "", 0 y false
+- target obligatorio
+- target permitido: production, preview, development
+- type permitido actualmente: encrypted
+```
+
+Salida segura:
+
+```json
+{
+  "ok": true,
+  "project_key": "ops",
+  "key": "TEST_MCP",
+  "target": ["preview"],
+  "type": "encrypted",
+  "created": true,
+  "requires_redeploy": true
+}
+```
+
+```txt
+Riesgo: WRITE
+```
+
+Caso validado:
+
+```txt
+TEST_MCP creado en ops-mcp para target preview.
+```
+
 ## Tools visibles actuales
 
 ```txt
@@ -315,13 +375,14 @@ health.check
 vercel.projects.list
 vercel.deploy.latest
 vercel.env.list
+vercel.env.set
 vercel.deploy.errors
 vercel.deploy.inspect
 ```
 
 ## Seguridad inicial
 
-Partir con tools SAFE.
+Separar tools por riesgo.
 
 ```txt
 SAFE:
@@ -331,13 +392,14 @@ SAFE:
 - listar env vars sin valores
 
 WRITE:
-- set env vars
-- trigger deploy
+- crear env vars
+- trigger deploy futuro
 
 DANGER:
 - borrar proyectos
 - borrar dominios
 - borrar datos
+- borrar env vars
 ```
 
 No habilitar DANGER en MVP.
