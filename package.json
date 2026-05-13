@@ -3,14 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Operational MCP for Vercel, Upstash and project runtime operations.",
-  "main": "src/index.js",
   "scripts": {
-    "dev": "node src/index.js",
-    "start": "node src/index.js"
+    "dev": "vercel dev"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "dotenv": "^16.5.0",
-    "zod": "^3.25.0"
-  }
+  "dependencies": {}
 }
