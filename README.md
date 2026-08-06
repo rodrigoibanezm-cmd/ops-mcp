@@ -1,4 +1,4 @@
-# ops-mcp
+# ops-mcp.
 
 MCP operacional remoto para Vercel, Upstash y operaciones runtime.
 
