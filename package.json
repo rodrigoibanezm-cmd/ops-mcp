@@ -2,9 +2,11 @@
   "name": "ops-mcp",
   "version": "1.0.0",
   "type": "module",
-  "description": "Operational MCP for Vercel, Upstash and project runtime operations.",
+  "description": "Operational MCP for Vercel, Upstash, Neon and project runtime operations.",
   "scripts": {
     "dev": "vercel dev"
   },
-  "dependencies": {}
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
 }
