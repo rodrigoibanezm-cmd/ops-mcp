@@ -23,7 +23,7 @@ api/mcp.js
   Router HTTP + JSON-RPC
 
 lib/mcp/auth.js
-  Autorización WRITE a nivel de transporte
+  Validación de write_token para tools WRITE
 
 lib/mcp/tools.js
   Registry agregado + dispatch
@@ -73,40 +73,15 @@ DANGER
 
 Las tools SAFE no requieren autorización WRITE.
 
-Las tools WRITE ya no exponen `write_token` en su input schema. El modelo no debe conocer ni reenviar `OPS_WRITE_TOKEN`.
-
-La conexión MCP debe enviar uno de estos headers:
-
-```http
-Authorization: Bearer <OPS_WRITE_TOKEN>
-```
-
-preferido, o durante transición:
-
-```http
-x-ops-write-token: <OPS_WRITE_TOKEN>
-```
-
-`api/mcp.js` convierte el header en contexto interno y `lib/mcp/auth.js` autoriza las tools WRITE comparándolo con `OPS_WRITE_TOKEN` del runtime.
-
-Por compatibilidad temporal, `callTool()` todavía acepta un `args.write_token` legado para invocaciones internas anteriores. Ese campo ya no forma parte de los schemas MCP y debe eliminarse cuando todas las conexiones hayan migrado.
-
-Esto evita el patrón incorrecto anterior:
+Las tools WRITE exponen un argumento obligatorio:
 
 ```text
-ChatGPT conoce secreto
-→ lo incluye en arguments
-→ MCP lo compara consigo mismo
+write_token
 ```
 
-El patrón actual es:
+Ese valor se compara contra `OPS_WRITE_TOKEN` del runtime. Si falta o no coincide, la operación se rechaza.
 
-```text
-conexión MCP autenticada
-→ secreto viaja en transporte
-→ modelo nunca lo ve
-→ MCP autoriza WRITE
-```
+Este diseño evita depender de OAuth o autenticación de transporte en ChatGPT y mantiene la autorización explícita por invocación.
 
 ## SAFE implementado
 
@@ -137,7 +112,7 @@ upstash.redis.set
 neon.sql.execute
 ```
 
-Todas requieren conexión MCP autorizada para WRITE.
+Todas requieren `write_token`.
 
 ### Vercel
 
@@ -167,6 +142,4 @@ No habilitado en el MVP:
 
 ## Seguridad
 
-`OPS_WRITE_TOKEN` protege únicamente la capacidad WRITE y debe vivir fuera del modelo, en el runtime del MCP y en la configuración segura de la conexión.
-
-Las respuestas no deben devolver ni loguear secretos.
+`OPS_WRITE_TOKEN` protege únicamente la capacidad WRITE. Vive como variable de entorno en Vercel y nunca debe escribirse en GitHub ni devolverse en respuestas o logs.
