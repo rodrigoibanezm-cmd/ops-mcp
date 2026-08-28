@@ -1,4 +1,5 @@
 import { jsonRpc, jsonRpcError } from '../lib/mcp/jsonRpc.js';
+import { authContext } from '../lib/mcp/auth.js';
 import { tools, callTool } from '../lib/mcp/tools.js';
 
 export default async function handler(req, res) {
@@ -22,6 +23,7 @@ export default async function handler(req, res) {
   }
 
   const { id, method, params } = req.body ?? {};
+  const context = authContext(req);
 
   try {
     if (method === 'initialize') {
@@ -45,7 +47,7 @@ export default async function handler(req, res) {
 
     if (method === 'tools/call') {
       return res.status(200).json(
-        jsonRpc(id, await callTool(params?.name, params?.arguments ?? {}))
+        jsonRpc(id, await callTool(params?.name, params?.arguments ?? {}, context))
       );
     }
 
