@@ -1,134 +1,56 @@
-# ops-mcp...
+# ops-mcp
 
-MCP operacional remoto para Vercel, Upstash y operaciones runtime.
+MCP operacional remoto para Vercel, Upstash, Neon y operaciones runtime.
 
-## Decisión cerrada
+## Arquitectura
 
-Este MCP se construye como servicio remoto por HTTP.
-
-```txt
+```text
 ChatGPT
-↓
-MCP remoto por HTTP
-↓
-ops-mcp hosteado en Vercel
-↓
+  ↓ MCP remoto HTTP
+ops-mcp en Vercel
+  ↓
 APIs operacionales
-↓
+  ↓
 proyectos operados
 ```
 
-## No usar
+El proyecto es cloud-first. GitHub se opera mediante el conector oficial de ChatGPT; `ops-mcp` se concentra en infraestructura y runtime.
 
-```txt
-- stdio local
-- repo local obligatorio
-- IDE como flujo principal
-- MCP propio para GitHub
-```
+## Estructura
 
-GitHub ya se opera con el conector oficial de ChatGPT.
-
-## Objetivo
-
-Permitir que ChatGPT opere servicios externos desde herramientas controladas, sin entrar manualmente a cada consola.
-
-Focos actuales:
-
-```txt
-Vercel:
-- deploys
-- env vars
-- estado runtime
-
-Upstash:
-- lectura segura de keys Redis
-- escaneo seguro de keys Redis
-- escritura controlada de keys Redis
-```
-
-Después:
-
-```txt
-- Google Drive/Sheets
-```
-
-## Arquitectura modular
-
-`api/mcp.js` debe mantenerse como router thin.
-
-Responsabilidad:
-
-```txt
-- recibir HTTP
-- responder GET health
-- manejar initialize
-- manejar tools/list
-- manejar tools/call
-- devolver JSON-RPC
-```
-
-No debe contener lógica operacional de Vercel, Upstash ni Google.
-
-Estructura actual:
-
-```txt
+```text
 api/mcp.js
   Router HTTP + JSON-RPC
 
-lib/mcp/jsonRpc.js
-  Helpers JSON-RPC
+lib/mcp/auth.js
+  Autorización WRITE a nivel de transporte
 
 lib/mcp/tools.js
-  Agregador de registry + dispatch por dominio
-
-lib/mcp/auth.js
-  Validación de write_token para tools WRITE
-
-lib/mcp/response.js
-  Formato estándar MCP content[]
+  Registry agregado + dispatch
 
 lib/config/projects.js
-  Resolución de project_key desde OPS_PROJECTS_JSON
-
-lib/vercel/client.js
-  Cliente Vercel API
-
-lib/upstash/client.js
-  Cliente Upstash REST read/write
+  Resolución de project_key
 
 lib/tools/vercel/
-  index.js
-  registry.js
-  handlers.js
-  projects.js
-  deployments.js
-  env.js
-
 lib/tools/upstash/
-  registry.js
-  handlers.js
-  read.js
-  write.js
+lib/tools/neon/
 ```
 
 Reglas:
 
-```txt
-- api/mcp.js no debe crecer con lógica operacional
-- lib/mcp/tools.js no debe acumular lógica de dominio
+```text
+- api/mcp.js debe permanecer thin
 - registry separado por dominio
 - handlers separados por dominio
-- evitar archivos sobre ~120 líneas
-- si un archivo crece, dividir por dominio antes de agregar más features
-- no mantener dos fuentes de verdad para la misma tool
+- evitar archivos de lógica sobre ~120 líneas
+- no mantener dos fuentes de verdad para una misma tool
 ```
 
 ## Configuración runtime
 
-El proyecto usa variables de entorno en Vercel:
+Variables de entorno en Vercel:
 
-```txt
+```text
 VERCEL_TOKEN
 OPS_PROJECTS_JSON
 OPS_WRITE_TOKEN
@@ -137,324 +59,114 @@ KV_REST_API_TOKEN
 KV_REST_API_READ_ONLY_TOKEN
 ```
 
-No deben escribirse en GitHub:
+Los secretos no se escriben en GitHub.
 
-```txt
-VERCEL_TOKEN
-OPS_WRITE_TOKEN
-KV_REST_API_TOKEN
-KV_REST_API_READ_ONLY_TOKEN
+## Autorización
+
+Las tools se separan por riesgo:
+
+```text
+SAFE
+WRITE
+DANGER
 ```
 
-`OPS_WRITE_TOKEN` protege tools WRITE.
+Las tools SAFE no requieren autorización WRITE.
 
-```txt
-SAFE no requiere write_token.
-WRITE requiere write_token.
+Las tools WRITE ya no exponen `write_token` en su input schema. El modelo no debe conocer ni reenviar `OPS_WRITE_TOKEN`.
+
+La conexión MCP debe enviar uno de estos headers:
+
+```http
+Authorization: Bearer <OPS_WRITE_TOKEN>
 ```
 
-Upstash SAFE usa:
+preferido, o durante transición:
 
-```txt
-KV_REST_API_URL
-KV_REST_API_READ_ONLY_TOKEN
+```http
+x-ops-write-token: <OPS_WRITE_TOKEN>
 ```
 
-Upstash WRITE usa:
+`api/mcp.js` convierte el header en contexto interno y `lib/mcp/auth.js` autoriza las tools WRITE comparándolo con `OPS_WRITE_TOKEN` del runtime.
 
-```txt
-KV_REST_API_URL
-KV_REST_API_TOKEN
+Por compatibilidad temporal, `callTool()` todavía acepta un `args.write_token` legado para invocaciones internas anteriores. Ese campo ya no forma parte de los schemas MCP y debe eliminarse cuando todas las conexiones hayan migrado.
+
+Esto evita el patrón incorrecto anterior:
+
+```text
+ChatGPT conoce secreto
+→ lo incluye en arguments
+→ MCP lo compara consigo mismo
 ```
 
-## Bloque SAFE implementado
+El patrón actual es:
 
-### health.check
-
-Verifica que el MCP esté vivo.
-
-```txt
-Entrada: ninguna
-Riesgo: SAFE
+```text
+conexión MCP autenticada
+→ secreto viaja en transporte
+→ modelo nunca lo ve
+→ MCP autoriza WRITE
 ```
 
-### vercel.projects.list
+## SAFE implementado
 
-Lista proyectos accesibles por el token de Vercel.
-
-```txt
-Entrada: ninguna
-Riesgo: SAFE
-```
-
-### vercel.deploy.latest
-
-Devuelve el último deploy de un proyecto.
-
-Entrada:
-
-```json
-{
-  "project_key": "helice"
-}
-```
-
-```txt
-Riesgo: SAFE
-```
-
-### vercel.env.list
-
-Lista variables de entorno de un proyecto.
-
-No devuelve valores secretos.
-
-Entrada:
-
-```json
-{
-  "project_key": "ops"
-}
-```
-
-```txt
-Riesgo: SAFE
-```
-
-### vercel.deploy.errors
-
-Lista deploys recientes en estado ERROR o CANCELED.
-
-Entrada:
-
-```json
-{
-  "project_key": "helice",
-  "limit": 10
-}
-```
-
-```txt
-Riesgo: SAFE
-```
-
-### vercel.deploy.inspect
-
-Inspecciona un deployment específico por UID.
-
-Entrada:
-
-```json
-{
-  "deployment_uid": "dpl_xxx",
-  "project_key": "helice"
-}
-```
-
-```txt
-Riesgo: SAFE
-```
-
-### upstash.redis.get
-
-Lee una key de Upstash Redis usando token read-only.
-
-Entrada:
-
-```json
-{
-  "key": "nombre:de:key"
-}
-```
-
-```txt
-Riesgo: SAFE
-```
-
-Regla:
-
-```txt
-No usar para leer keys que contengan secretos o credenciales.
-```
-
-### upstash.redis.scan
-
-Lista keys de Upstash Redis por patrón sin devolver valores.
-
-Entrada:
-
-```json
-{
-  "cursor": "0",
-  "match": "places:*",
-  "count": 20
-}
-```
-
-Reglas:
-
-```txt
-- usa token read-only
-- no devuelve values
-- count máximo: 100
-- devuelve cursor para paginación
-```
-
-```txt
-Riesgo: SAFE
-```
-
-## Bloque WRITE implementado
-
-Las tools WRITE exigen:
-
-```txt
-write_token
-```
-
-El valor se compara contra:
-
-```txt
-OPS_WRITE_TOKEN
-```
-
-No se devuelve ni se loguea.
-
-### vercel.env.set
-
-Crea una variable de entorno nueva en Vercel.
-
-No actualiza variables existentes.
-No borra variables.
-No dispara redeploy automático.
-No devuelve el valor secreto.
-
-```txt
-Riesgo: WRITE
-```
-
-### vercel.env.update
-
-Actualiza una variable de entorno existente usando `env_id`.
-
-No actualiza por `key`.
-No borra variables.
-No dispara redeploy automático.
-No devuelve el valor secreto.
-
-```txt
-Riesgo: WRITE
-```
-
-### upstash.redis.set
-
-Escribe una key en Upstash Redis usando token WRITE.
-
-Entrada:
-
-```json
-{
-  "key": "test:mcp",
-  "value": "hello",
-  "write_token": "..."
-}
-```
-
-Validaciones:
-
-```txt
-- key obligatorio
-- value obligatorio, pero acepta "", 0 y false
-- write_token obligatorio
-```
-
-Salida segura:
-
-```json
-{
-  "ok": true,
-  "key": "test:mcp",
-  "updated": true
-}
-```
-
-```txt
-Riesgo: WRITE
-```
-
-No implementa:
-
-```txt
-- delete
-- ttl
-- mset
-- json helper
-- namespaces
-```
-
-## Tools visibles actuales
-
-```txt
+```text
 health.check
 vercel.projects.list
 vercel.deploy.latest
 vercel.env.list
-vercel.env.set
-vercel.env.update
 vercel.deploy.errors
 vercel.deploy.inspect
 upstash.redis.get
 upstash.redis.scan
-upstash.redis.set
+neon.branches.list
+neon.branch.get
+neon.tables.list
+neon.table.describe
+neon.sql.query
 ```
 
-## Seguridad inicial
+`neon.sql.query` acepta una única sentencia de solo lectura.
 
-Separar tools por riesgo.
+## WRITE implementado
 
-```txt
-SAFE:
-- leer deploys
-- inspeccionar deploys
-- listar proyectos
-- listar env vars sin valores
-- leer keys Upstash con token read-only
-- escanear keys Upstash con token read-only
+```text
+vercel.env.set
+vercel.env.update
+upstash.redis.set
+neon.sql.execute
+```
 
-WRITE:
-- crear env vars con write_token
-- actualizar env vars por env_id con write_token
-- escribir keys Upstash con write_token
+Todas requieren conexión MCP autorizada para WRITE.
 
-DANGER:
+### Vercel
+
+`vercel.env.set` crea una variable nueva. No sobrescribe una existente y no dispara redeploy automático.
+
+`vercel.env.update` actualiza una variable existente por `env_id`.
+
+### Upstash
+
+`upstash.redis.set` escribe una key usando el token WRITE del runtime. No implementa delete, TTL ni operaciones masivas.
+
+### Neon
+
+`neon.sql.execute` ejecuta SQL con escritura o DDL sobre el branch indicado; `main` es el default.
+
+## DANGER
+
+No habilitado en el MVP:
+
+```text
 - borrar proyectos
 - borrar dominios
-- borrar datos
 - borrar env vars
 - borrar keys Upstash
+- borrar datos Neon mediante tools dedicadas
 ```
 
-No habilitar DANGER en MVP.
+## Seguridad
 
-## Estado actual
+`OPS_WRITE_TOKEN` protege únicamente la capacidad WRITE y debe vivir fuera del modelo, en el runtime del MCP y en la configuración segura de la conexión.
 
-Repo cloud-first.
-
-Los archivos se editan desde ChatGPT usando el conector oficial de GitHub.
-
-El MCP está hosteado en Vercel y expone endpoint HTTP.
-
-Últimas validaciones:
-
-```txt
-tools/list OK
-vercel.deploy.latest OK
-vercel.env.list OK
-vercel.env.update OK
-WRITE sin token bloqueado
-WRITE con token OK
-SAFE sin token OK
-upstash.redis.get OK
-upstash.redis.scan OK
-upstash.redis.set OK
-```
+Las respuestas no deben devolver ni loguear secretos.
